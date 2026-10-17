@@ -30,6 +30,7 @@
 ## 環境変数（`.env`、コミット禁止）
 ```
 JQUANTS_API_KEY=
+JQUANTS_PLAN=free        # free / light / standard / premium
 EDINET_API_KEY=
 ANTHROPIC_API_KEY=
 ```
