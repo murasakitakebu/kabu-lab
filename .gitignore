@@ -1,8 +1,18 @@
 .env
-data/
+/data/
 *.duckdb
 __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+
+# 追加
+.env.*
+!.env.example
+*.duckdb.wal
+.coverage
+htmlcov/
+*.egg-info/
+/dist/
+/build/
