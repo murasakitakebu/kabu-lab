@@ -526,6 +526,16 @@ class Store:
             [_now_jst(), status, rec.rows, rec.requests, error, log_id],
         )
 
+    def completed_dates(self, job: str) -> set[date]:
+        """fetch_log 上で成功済みの、日付単位ジョブの日付集合（再開時に飛ばすため）。"""
+        rows = self.con.execute(
+            "SELECT DISTINCT CAST(json_extract_string(params, '$.date') AS DATE) FROM fetch_log"
+            " WHERE job = ? AND status = 'ok'"
+            " AND json_extract_string(params, '$.date') IS NOT NULL",
+            [job],
+        ).fetchall()
+        return {r[0] for r in rows}
+
     # 読み出し
 
     def last_date(self, table: str, code: str | None = None) -> date | None:
