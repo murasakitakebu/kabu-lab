@@ -31,6 +31,7 @@ try:
         TANSHIN_CODES,
         EdinetClient,
     )
+    from core.reports.ai_commentary import CommentaryRequest, stream_commentary
     from core.reports.reading_map import (
         STRATEGY_GUIDES,
         get_all_reading_points,
@@ -39,6 +40,7 @@ try:
     )
 
     EDINET_AVAILABLE = bool(os.environ.get("EDINET_API_KEY"))
+    AI_AVAILABLE = bool(os.environ.get("ANTHROPIC_API_KEY"))
 except ImportError as e:
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.stop()
@@ -101,7 +103,9 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # メイン：手法別 読み方マップ
 # ---------------------------------------------------------------------------
-tab_map, tab_docs, tab_redflags = st.tabs(["📋 読み方マップ", "📄 書類一覧", "🚩 赤信号チェック"])
+tab_map, tab_docs, tab_ai, tab_redflags = st.tabs(
+    ["📋 読み方マップ", "📄 書類一覧", "🤖 AI 解説", "🚩 赤信号チェック"]
+)
 
 # --- タブ1: 読み方マップ ---
 with tab_map:
@@ -232,7 +236,130 @@ with tab_docs:
                         use_container_width=True,
                     )
 
-# --- タブ3: 赤信号チェック ---
+# --- タブ3: AI 解説 ---
+with tab_ai:
+    st.subheader("🤖 AI による書類解説")
+    st.caption(
+        "書類テキストを貼り付けると、選択した手法の視点から Claude が解説します。"
+        "学習・研究目的の出力です。投資推奨ではありません。"
+    )
+
+    if not AI_AVAILABLE:
+        st.warning(
+            "ANTHROPIC_API_KEY が設定されていません。`.env` ファイルに `ANTHROPIC_API_KEY=<key>` を追加してください。",
+            icon="🔑",
+        )
+        st.markdown(
+            """
+**API キーの取得:**
+1. [Anthropic Console](https://console.anthropic.com/) でアカウントを作成
+2. API キーを発行
+3. `.env` ファイルに `ANTHROPIC_API_KEY=<取得したキー>` を追加して再起動
+"""
+        )
+    else:
+        col_left, col_right = st.columns([1, 1])
+
+        with col_left:
+            ai_company = st.text_input(
+                "会社名",
+                placeholder="例: トヨタ自動車",
+                key="ai_company",
+            )
+            ai_doc_desc = st.text_input(
+                "書類種別",
+                value="有価証券報告書",
+                key="ai_doc_desc",
+            )
+            ai_submit_date = st.text_input(
+                "提出日",
+                placeholder="例: 2024-06-28",
+                key="ai_submit_date",
+            )
+
+        with col_right:
+            guide = get_guide(selected_strategy)
+            focus_options = []
+            if guide:
+                focus_options = [rp.section for rp in get_all_reading_points(selected_strategy)]
+
+            ai_focus = st.multiselect(
+                "重点箇所（任意）",
+                options=focus_options,
+                default=focus_options[:3] if focus_options else [],
+                help="AI に特に着目させたい箇所を選択してください。",
+                key="ai_focus",
+            )
+
+        ai_text = st.text_area(
+            "書類テキスト（コピー＆ペースト）",
+            height=300,
+            placeholder="PDF や EDINET から読み取ったテキストを貼り付けてください。\n\n例：\n売上高  3,562,345百万円（前期比 +8.2%）\n営業利益  412,890百万円（前期比 +15.4%）\n...",
+            key="ai_text",
+        )
+
+        char_count = len(ai_text)
+        if char_count > 0:
+            color = "green" if char_count <= 8000 else "orange"
+            st.caption(f":{color}[{char_count:,} 文字（推奨: 8,000 文字以内）]")
+
+        analyze_btn = st.button(
+            "🤖 AI に解説してもらう",
+            type="primary",
+            disabled=not ai_text.strip() or not ai_company.strip(),
+        )
+
+        if analyze_btn:
+            req = CommentaryRequest(
+                strategy_name=STRATEGY_LABELS.get(selected_strategy, selected_strategy),
+                company_name=ai_company,
+                doc_description=ai_doc_desc or "書類",
+                submit_date=ai_submit_date or "不明",
+                text_excerpt=ai_text,
+                focus_sections=ai_focus,
+            )
+
+            st.divider()
+            st.markdown(f"**{ai_company} / {ai_doc_desc}** の解説（{STRATEGY_LABELS.get(selected_strategy, selected_strategy)} 視点）")
+
+            result_placeholder = st.empty()
+            full_text = ""
+
+            try:
+                with st.spinner("Claude が解説を生成中…"):
+                    for chunk in stream_commentary(req):
+                        full_text += chunk
+                        result_placeholder.markdown(full_text + "▌")
+
+                result_placeholder.markdown(full_text)
+                st.success("解説が完成しました。")
+
+                # セッションに保存
+                if "ai_history" not in st.session_state:
+                    st.session_state.ai_history = []
+                st.session_state.ai_history.append(
+                    {
+                        "company": ai_company,
+                        "strategy": STRATEGY_LABELS.get(selected_strategy, selected_strategy),
+                        "doc": ai_doc_desc,
+                        "date": ai_submit_date,
+                        "result": full_text,
+                    }
+                )
+
+            except Exception as exc:
+                st.error(f"AI 解説エラー: {exc}")
+
+        # 解説履歴
+        if "ai_history" in st.session_state and st.session_state.ai_history:
+            st.divider()
+            st.subheader("📚 このセッションの解説履歴")
+            for i, h in enumerate(reversed(st.session_state.ai_history)):
+                label = f"{h['company']} / {h['doc']} ({h['strategy']})"
+                with st.expander(label):
+                    st.markdown(h["result"])
+
+# --- タブ4: 赤信号チェック ---
 with tab_redflags:
     guide = get_guide(selected_strategy)
     st.subheader("🚩 赤信号チェックリスト")

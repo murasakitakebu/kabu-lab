@@ -5,6 +5,7 @@ description = "日本株 戦略研究プラットフォーム（個人用）"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=2.0",
     "duckdb>=1.1",
     "jquants-api-client>=2.0",
     "pandas>=2.2",
