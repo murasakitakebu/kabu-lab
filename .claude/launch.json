@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kabu-lab",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "streamlit", "run", "app/Home.py", "--server.port", "8501"],
+      "port": 8501
+    }
+  ]
+}
