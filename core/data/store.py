@@ -427,12 +427,13 @@ class FetchRecord:
 class Store:
     """DuckDB の読み書き。`Store(":memory:")` でテスト用のメモリ DB になる。"""
 
-    def __init__(self, path: str | Path = DEFAULT_DB_PATH) -> None:
-        if str(path) != ":memory:":
+    def __init__(self, path: str | Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> None:
+        if str(path) != ":memory:" and not read_only:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.con = duckdb.connect(str(path))
+        self.con = duckdb.connect(str(path), read_only=read_only)
         self.con.execute("SET TimeZone = 'Asia/Tokyo'")
-        self.init_schema()
+        if not read_only:
+            self.init_schema()
 
     def close(self) -> None:
         """接続を閉じる。"""
@@ -597,6 +598,44 @@ class Store:
             "SELECT * EXCLUDE (raw) FROM fin_summary WHERE code = ? AND disclosed_date <= ?"
             " ORDER BY disclosed_date, disclosed_time",
             [normalize_code(code), as_of],
+        ).df()
+
+    def fin_summary_with_raw(self, code: str) -> pd.DataFrame:
+        """1 銘柄の決算短信サマリーを raw（元レコード）つきで返す（配当推定用）。"""
+        return self.con.execute(
+            "SELECT * FROM fin_summary WHERE code = ? ORDER BY disclosed_date, disclosed_time",
+            [normalize_code(code)],
+        ).df()
+
+    def trading_days(self, start: date | None = None, end: date | None = None) -> list[date]:
+        """保存済みカレンダーの立会日（営業日・半日立会）を昇順で返す。"""
+        sql = "SELECT date FROM trading_calendar WHERE holiday_division IN ('1', '2')"
+        args: list[Any] = []
+        if start is not None:
+            sql += " AND date >= ?"
+            args.append(start)
+        if end is not None:
+            sql += " AND date <= ?"
+            args.append(end)
+        return [r[0] for r in self.con.execute(sql + " ORDER BY date", args).fetchall()]
+
+    def price_date_range(self) -> tuple[date, date] | None:
+        """保存済み株価の最古日・最新日。"""
+        row = self.con.execute("SELECT min(date), max(date) FROM daily_bars").fetchone()
+        return None if row is None or row[0] is None else (row[0], row[1])
+
+    def search_securities(self, query: str, limit: int = 30) -> pd.DataFrame:
+        """銘柄コード（4/5 桁）または社名の部分一致で検索する（上場廃止銘柄も含む）。"""
+        q = query.strip()
+        if not q:
+            return pd.DataFrame(columns=["code", "name", "market_name", "as_of"])
+        return self.con.execute(
+            "WITH latest AS (SELECT * FROM listed_info QUALIFY row_number() OVER"
+            " (PARTITION BY code ORDER BY as_of DESC) = 1)"
+            " SELECT code, name, market_name, as_of FROM latest"
+            " WHERE code LIKE ? || '%' OR name ILIKE '%' || ? || '%'"
+            " ORDER BY (code LIKE ? || '%') DESC, code LIMIT ?",
+            [q.upper(), q, q.upper(), limit],
         ).df()
 
     def latest_listed_info(self) -> pd.DataFrame:
